@@ -183,14 +183,14 @@ int println(int x, int y, byte *str){
 	return str - org_str;
 }
 
-/*
+//强制转化代码
 void printop(int x, int y, const char* p){
 	
 	byte cb[10] = {0};
 	memcpy((char*)cb,p,4);
 	println(x, y, cb);
 }
-*/
+
 
 
 //主程序/////////////////////////////////////////////////
@@ -200,9 +200,14 @@ int main() {
 	videoSetModeSub(MODE_5_2D);
 	vramSetBankA(VRAM_A_LCD);
 	
-	println(113, 93, "gfd:");
+	drawf();//单笔画国字，工作正常
+	
+	//println(113, 93, "gfd:");//不能工作，无法编译
+	printop(113, 93, "猜");//工作不正常，字模强转后不对
 
-	button_draw( 23, 23, buttons_pic[4] );//工作正常
+	button_draw( 23, 33, buttons_pic[4] );//工作正常
+	button_draw( 53, 28, buttons_pic[1] );//工作正常
+	button_draw( 20, 88, buttons_pic[5] );//工作正常
 
 	while (1) {
 		swiWaitForVBlank();

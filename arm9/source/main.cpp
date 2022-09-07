@@ -6,99 +6,78 @@
 #include <string.h>
 #include <cstdarg>
 
-//#include "pixelprint.c"
+#define ASCII_BEGIN	0x21
+#define ASCII_END	0x80
+#define HZ_PAGE_BEGIN	0x81
+#define HZ_PAGE_END	0xfe
+#define HZ_STARTED_CODE	0x40
+#define HZ_ENDED_CODE	0xfe
+#define HEAD_SIZE	0xa
 
-//国字编程部分////////////////////////////////////////////////////////////////////////////////////////////////
-void shn(int x, int y,uint16* buffer,uint16 color){
-	buffer += y*SCREEN_WIDTH + x;
-	*buffer = color;
-}
-
-u16 fdate[16]={0x0000,0x7ffc,0x4004,0x5ff4,0x4104,0x4104,0x4104,0x4fe4,0x4144,0x4124,0x4124,0x5ff4,0x4004,0x4004,0x7ffc,0x4004};
-u16 test;
-
-void drawf(){
-	for(int y=0;y<16;y++){
-		test = fdate[y];
-		for (int x=0;x<16;x++){
-			if((test&0x8000) !=0){
-				shn(x+10,y+10,VRAM_A,RGB15(31,0,0));
-			}else{
-				shn(x+10,y+10,VRAM_A,RGB15(0,0,0));
-			}
-		test <<=1;
-		}
-	}
-}
-
-//F1，F2，化Cn ///////////////////////////////////////////////////////////////////////////////////////////
-const u8 buttons_pic[6][10] = 
-  {
-    {8, 0x4f, 0x62, 0x42, 0x4E, 0x42, 0x42, 0x42, 0xE2, 0x00},//F1
-    {9, 0xcf, 0x44, 0x0a, 0x74, 0x28, 0x48, 0x88, 0x08, 0xf1},//F2
-    {9, 0xCF, 0x44, 0x0a, 0x74, 0x24, 0x50, 0xa4, 0x48, 0x61},//F3
-    {9, 0x06, 0x12, 0x04, 0x08, 0x10, 0x2B, 0x6c, 0x4a, 0x93},//Cn
-    {9, 0x0e, 0x08, 0xd0, 0x23, 0x49, 0x92, 0x5c, 0x09, 0x11},//Jp
-    {9, 0x26, 0x53, 0xa6, 0x4a, 0x93, 0x26, 0x55, 0x4a, 0x93}//ok
-  };
-
-
-void button_draw(int x, int y,const u8* bit){
-	const u8 *pixel;
-	u8 delta;
-	u16 mask,i,j;
-
-	u16 *current;  // 显存位置VRAM_A
-	current = VRAM_A + y*SCREEN_WIDTH + x; 
-	pixel = bit+1;
-	mask = 1;
-	delta = SCREEN_WIDTH - *bit;
-
-	for(i=1; i <= 8; ++i){
-		for(j=1; j <= *bit; ++j){
-			if(*pixel & mask){
-				*current = RGB15(31,0,0);
-			}
-			++current;
-			if(mask == 0x80) {
-				mask = 1;
-				++pixel;
-			} 
-			else mask <<= 1;
-		}
-		current += delta;
-	}
-}
-
-
-//字符模数画字部分//////////////////////////////////////////////////////////////////////////////////
-u16 pen_color = RGB15(31,0,0);  // 画笔颜色
-extern const u8 font_info[];
-//#define MASK_INIT   0x01
-//#define MASK_REINIT 0x80
-
-
+//**********元常量************/
 #define ASCII_FONT_WIDTH             6           //单字节码字模宽
 #define ASCII_FONT_HEIGHT            12          //单字节码字模高
 #define ASCII_FONT_BYTES             9           //一个单字节码字模占用的空间
-
 #define HZ_FONT_WIDTH                11          //双字节码字模宽
 #define HZ_FONT_HEIGHT               11          //双字节码字模高
 #define HZ_FONT_BYTES                16          //一个双字节码字模占用的空间
 
-#define IS_ASCII_CODE(byte_ptr)       ( *(byte_ptr) >= 0x21 ) && ( *(byte_ptr) <= 0x80 )  //判断一个位置的字符是否是单字节码
-#define ASCII_FONT_LOCATE(byte_ptr)   0xa + 9 * ( *(byte_ptr) - 0x21 )  //找到单字节码在字库中的字模的首位
+//**********ascii单字节码相关************/
+#define ASCII_COUNTS                  (ASCII_END - ASCII_BEGIN + 1)     //字库中单字节码个数
+#define ASCII_SIZE                    (ASCII_COUNTS * ASCII_FONT_BYTES) //字库中单字节码占用总空间
+#define ASCII_BASE                    HEAD_SIZE                       //计算单字节码字模在字库中位置时用到的偏移常量
 
-#define IS_HZ_CODE(byte_ptr)         ( *(byte_ptr) >= 0x81 ) && ( *(byte_ptr) <= 0xfe ) && ( *( (byte_ptr)+1 ) >= 0x40 ) && ( *( (byte_ptr)+1 ) <= 0xfe) //判定给定位置上的字符是否是GBK码
-#define HZ_FONT_LOCATE(byte_ptr)     0x36A + 16 * ( *( (byte_ptr)+1 ) - 0x40  + ( *(byte_ptr) - 0x81 ) * 0xBF ) //找到汉字在字库中的首位置
+//**********GBK双字节码相关**************/
+#define HZ_BASE                       (ASCII_BASE + ASCII_SIZE)            //计算双字节码字模在字库中的位置时用到的偏移常量
+#define HZ_PAGE_COUNTS                (HZ_PAGE_END - HZ_PAGE_BEGIN + 1)    //字库一共支持多少个GBK页面的汉字字体
+#define HZ_COUNTS_PERPAGE             (HZ_ENDED_CODE - HZ_STARTED_CODE +1) //字库中的一页有多少个汉字被支持
+#define HZ_COUNTS                     (HZ_PAGE_COUNTS * HZ_COUNTS_PERPAGE) //字库总共支持多少汉字
+#define HZ_PAGE_SIZE                  (HZ_FONT_BYTES * HZ_COUNTS_PERPAGE)  //一页汉字占用的总空间
+#define HZ_SIZE                       (HZ_FONT_BYTES * HZ_COUNTS)          //所有汉字占用的总空间
 
-int pxa,pya;
-void drawAscii(int x, int y, byte *code){////point lt, byte *code){
-	const unsigned char *pixel;
- 	byte mask, i, j;  // 循环体中的计数
+#define MASK_INIT   0x01
+#define MASK_REINIT 0x80
+
+
+u16 pen_color = RGB15(31,0,0);  // 画笔颜色
+extern const char font_info[];
+int pxa,pya,pxg,pyg;//位置函数
+
+
+bool IS_ASCII_CODE(const char *byte_ptr){//判断一个位置的字符是否是单字节码
+	if(( *(byte_ptr) >= ASCII_BEGIN ) && ( *(byte_ptr) <= ASCII_END )){  
+		return true;
+	}else{	
+		return false;
+	}
+}
+
+
+u16 ASCII_FONT_LOCATE(const char *byte_ptr){ //找到单字节码在字库中的字模的首位
+	return (ASCII_BASE + ASCII_FONT_BYTES * ( *(byte_ptr) - ASCII_BEGIN )); 
+}
+
+
+bool IS_HZ_CODE(const char *byte_ptr){//判定给定位置上的字符是否是GBK码
+	if(( *(byte_ptr) >= HZ_PAGE_BEGIN ) && ( *(byte_ptr) <= HZ_PAGE_END ) && ( *( (byte_ptr)+1 ) >= HZ_STARTED_CODE ) && ( *( (byte_ptr)+1 ) <= HZ_ENDED_CODE)){
+		return true;	
+	}else{	
+		return false;
+	}
+}
+
+
+u16 HZ_FONT_LOCATE(const char *byte_ptr){//找到汉字在字库中的首位置
+	return (HZ_BASE + HZ_FONT_BYTES * ( *( (byte_ptr)+1 ) - HZ_STARTED_CODE  + ( *(byte_ptr) - HZ_PAGE_BEGIN ) * HZ_COUNTS_PERPAGE ));
+}
+
+
+void drawAscii(int x, int y, const char *code){////point lt, byte *code){
+	const char *pixel;
+ 	u16 mask, i, j;  // 循环体中的计数
+	
 	int rbx = x + ASCII_FONT_WIDTH; //rb
 	int rby = y + ASCII_FONT_HEIGHT;
-
 	u16 *current;  // 显存位置
 	if(x <= SCREEN_WIDTH && y <= SCREEN_HEIGHT && rbx <= SCREEN_WIDTH && rby <= SCREEN_HEIGHT){ // 可以描出字符
 		current = VRAM_A + y*SCREEN_WIDTH + x;             // 找到左上角对应的顶点内存
@@ -111,8 +90,8 @@ void drawAscii(int x, int y, byte *code){////point lt, byte *code){
 					*current = pen_color;
 				}//可能范围不对
 				++current;
-				if(mask == 0x80){//MASK_REINIT
-					mask = 1;//MASK_INIT;
+				if(mask == MASK_REINIT){
+					mask = MASK_INIT;
 					++pixel;
 				} //用完了一个BYTE的字模数据要往把指针下移
 				else mask <<= 1;
@@ -122,13 +101,16 @@ void drawAscii(int x, int y, byte *code){////point lt, byte *code){
 		pxa=rbx;
 		pya=y;// 下一个字符的左上角位置///////////////////////////////////////////
 	}
-	pxa=x;pya=y;
+	else{
+		pxa=x;
+		pya=y;
+	}
 }
 
-int pxg,pyg;
-void drawGbk(int x, int y, byte *code){
-	const unsigned char *pixel;
-	byte i, j, mask;
+
+void drawGbk(int x, int y, const char *code){
+	const char *pixel;
+	u16 i, j, mask;
 
 	int rbx = x + HZ_FONT_WIDTH; 
 	int rby = y + HZ_FONT_HEIGHT;
@@ -136,44 +118,49 @@ void drawGbk(int x, int y, byte *code){
 	if(x <= SCREEN_WIDTH && y <= SCREEN_HEIGHT && rbx <= SCREEN_WIDTH && rby <= SCREEN_HEIGHT){
 		current = VRAM_A + y*SCREEN_WIDTH + x;
 		pixel = font_info + HZ_FONT_LOCATE(code);
-		mask = 1;//MASK_INIT;
+		mask = MASK_INIT;
 		for(i=1; i <= HZ_FONT_HEIGHT; ++i){
 			for(j=1;j <= HZ_FONT_WIDTH; ++j){
 				if(*pixel & mask){
 					*current = pen_color;
 				}//可能范围不对
 				++current;
-				if(mask == 0x80) {//MASK_REINIT
-					mask = 1;//MASK_INIT;
+				if(mask == MASK_REINIT) {
+					mask = MASK_INIT;
 					++pixel;
 				}
 		    	else mask <<= 1;
 			}
 			current += SCREEN_WIDTH - HZ_FONT_WIDTH;
 		}
-		pxg=rbx+1;pyg=y;
-  	}
- 	pxg=x;pyg=y;
+		pxg=rbx+1;
+		pyg=y;
+	}
+	else{
+		pxg=x;
+		pyg=y;
+	}
 }
 
 
-int println(int x, int y, byte *str){
-
-	byte *org_str = str;       // 保存起始位置，返回值用到
+int println(int x, int y, const char *str){//point lt,
+	const char *org_str = str;       // 保存起始位置，返回值用到
 	int next_ltx,next_lty; //next_lt            // 保存下一个字符的左上角位置
 	for(;*str!='\n' && *str != '\0';++str){
 		if( IS_HZ_CODE(str) ){   // 汉字就调用drawGbk
 			drawGbk(x, y, str);
 			next_ltx=pxg;
 			next_lty=pyg;
+
 			if(next_ltx == x) break; //此行已无法往后写，不写了该返回了
-			x = next_ltx;
-			y = next_lty;
- 			++str;
+				x = next_ltx;
+				y = next_lty;
+				++str;
 		}else if( IS_ASCII_CODE(str) ){
 			drawAscii(x, y, str);
 			next_ltx=pxa;
 			next_lty=pya;
+
 			if(next_ltx == x) break;
 			x = next_ltx;
 			y = next_lty;
@@ -183,31 +170,45 @@ int println(int x, int y, byte *str){
 	return str - org_str;
 }
 
-//强制转化代码
-void printop(int x, int y, const char* p){
-	
-	byte cb[10] = {0};
-	memcpy((char*)cb,p,4);
-	println(x, y, cb);
-}
 
-
-
+PrintConsole topScreen;//文字需要
+PrintConsole bottomScreen;
 //主程序/////////////////////////////////////////////////
 int main() {
+	
+	
+	/*//打印字模查找部分//////////////工作正常
+	videoSetMode(MODE_0_2D);
+	videoSetModeSub(MODE_0_2D);
+	vramSetBankA(VRAM_A_MAIN_BG);
+	vramSetBankC(VRAM_C_SUB_BG);
+	consoleInit(&topScreen, 3,BgType_Text4bpp, BgSize_T_256x256, 31, 0, true, true);
+	consoleInit(&bottomScreen, 3,BgType_Text4bpp, BgSize_T_256x256, 31, 0, false, true);
+	consoleSelect(&bottomScreen);
+	swiWaitForVBlank();
+	consoleClear();
+	
+	const char *base;
+	const char *pixel;
+	const char *pixb;
+	base = font_info;
+	//pixb = (ASCII_BASE + ASCII_FONT_BYTES * ( *("a") - ASCII_BEGIN ));//位置
+	pixel = font_info + (ASCII_BASE + ASCII_FONT_BYTES * ( *("a") - ASCII_BEGIN ));
+	printf("word:0x%x\n", *("a"));
+	printf("base:0x%x\n", base);
+	printf("weizhi:0x%x\n",(ASCII_BASE + ASCII_FONT_BYTES * ( *("a") - ASCII_BEGIN )));
+	printf("base+weizhi:0x%x\n", pixel);
+
+	//printf("0x%x\n",0x36A+0x10*(*("a"+1)-0x40+(*("a")-0x81)*0xBF));
+	*///查找结束
+	
 	
 	videoSetMode(MODE_FB0);
 	videoSetModeSub(MODE_5_2D);
 	vramSetBankA(VRAM_A_LCD);
 	
-	drawf();//单笔画国字，工作正常
-	
-	//println(113, 93, "gfd:");//不能工作，无法编译
-	printop(113, 93, "猜");//工作不正常，字模强转后不对
+	println(113, 93, "12345asdbwWQQY+你猜一猜");
 
-	button_draw( 23, 33, buttons_pic[4] );//工作正常
-	button_draw( 53, 28, buttons_pic[1] );//工作正常
-	button_draw( 20, 88, buttons_pic[5] );//工作正常
 
 	while (1) {
 		swiWaitForVBlank();
